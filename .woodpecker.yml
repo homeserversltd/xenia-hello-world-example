@@ -1,0 +1,85 @@
+when:
+  event: push
+  branch: main
+
+steps:
+  - name: build-and-release
+    image: bash
+    environment:
+      FORGEJO_TOKEN:
+        from_secret: FORGEJO_TOKEN
+    commands:
+      - |
+        set -eu
+        export RUSTUP_HOME="$PWD/.cache/rustup"
+        export CARGO_HOME="$PWD/.cache/cargo"
+        export PATH="$CARGO_HOME/bin:$PATH"
+        export CARGO_NET_GIT_FETCH_WITH_CLI=true
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=credential.https://git.home.arpa.helper
+        export GIT_CONFIG_VALUE_0='!f() { if [ "$1" = get ]; then printf "username=x-token\npassword=%s\n" "$FORGEJO_TOKEN"; fi; }; f'
+        if [ "$(uname -m)" != x86_64 ]; then
+          printf '%s\n' 'This pipeline needs an x86_64 runner' >&2
+          exit 1
+        fi
+        if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
+          mkdir -p .cache
+          curl --fail --silent --show-error --location https://sh.rustup.rs -o .cache/rustup-init.sh
+          sh .cache/rustup-init.sh -y --no-modify-path --profile minimal
+        fi
+        CARTRIDGE_SOURCE_SHA="$CI_COMMIT_SHA" cargo build --release --locked
+        python3 - <<'PY'
+        import datetime
+        import hashlib
+        import json
+        import os
+        import pathlib
+        import re
+        import urllib.parse
+        import urllib.request
+
+        owner = os.environ['CI_REPO_OWNER']
+        repo = os.environ['CI_REPO_NAME']
+        sha = os.environ['CI_COMMIT_SHA']
+        token = os.environ['FORGEJO_TOKEN']
+        if not repo.startswith('cartridge-') or not re.fullmatch('[0-9a-f]{40}', sha):
+            raise SystemExit('Expected a cartridge repository and a full source SHA')
+        api = 'https://git.home.arpa/api/v1/repos/' + '/'.join(
+            urllib.parse.quote(part, safe='') for part in (owner, repo)) + '/releases'
+        binary_name = repo + '-x86_64'
+        binary = pathlib.Path('target/release', repo).read_bytes()
+        digest = hashlib.sha256(binary).hexdigest()
+        manifest = json.loads(pathlib.Path('cartridge.json').read_text())
+        manifest['source'].update({'release_repo': owner + '/' + repo, 'ref': 'main'})
+        manifest['content_inventory_digest'] = digest
+        flag = {'schema': 'estate.release-flag.v1', 'component': repo,
+                'source_sha': sha, 'sha256': digest,
+                'flagged_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'pipeline_url': os.environ['CI_PIPELINE_URL']}
+        def encoded(value):
+            return (json.dumps(value, indent=2) + '\n').encode()
+        class SameForge(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                target = urllib.parse.urlsplit(urllib.parse.urljoin(req.full_url, newurl))
+                if target.scheme != 'https' or target.netloc != 'git.home.arpa':
+                    raise RuntimeError('Release redirect left your Forgejo')
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+        def request(method, url, data, content_type):
+            headers = {'Authorization': 'token ' + token, 'Content-Type': content_type,
+                       'Accept': 'application/json'}
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            with urllib.request.build_opener(SameForge()).open(req, timeout=180) as response:
+                return json.loads(response.read())
+        release = request('POST', api, encoded({'tag_name': sha, 'name': repo + ' ' + sha[:8],
+                          'target_commitish': sha, 'draft': True, 'prerelease': False}),
+                          'application/json')
+        assets = {binary_name: binary,
+                  binary_name + '.sha256': (digest + '  ' + binary_name + '\n').encode(),
+                  'cartridge.json': encoded(manifest), 'release.flag': encoded(flag)}
+        release_url = api + '/' + str(release['id'])
+        for name, data in assets.items():
+            request('POST', release_url + '/assets?' + urllib.parse.urlencode({'name': name}),
+                    data, 'application/octet-stream')
+        request('PATCH', release_url, encoded({'draft': False}), 'application/json')
+        print('Release ready:', sha)
+        PY

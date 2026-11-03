@@ -1,0 +1,3 @@
+[data-pane-panel="hello-world"] .ui-card {
+  border-top: 3px solid var(--accent);
+}

@@ -1,3 +1,10 @@
-# xenia-hello-world-example
+# Your first tab
 
-The public household example: a Xenia tab built on xenia-kit, released by your HomeServer's own Woodpecker. Canonical here; mirrored to github.com/homeserversltd/xenia-hello-world-example.
+This is a small Xenia tab built with the public xenia-kit. It wears the HomeServer's look, and your HomeServer's Woodpecker builds its releases. You and your assistant can use it as a starting point for your own tab.
+
+1. Copy these files into a new repository on your HomeServer's Forgejo at https://git.home.arpa. Name the repository `cartridge-<id>` and use its `main` branch. For the unchanged example, use `cartridge-hello-world`.
+2. Rename the tab: replace `hello-world` in `cartridge.json`, `src/fragment.rs`, and `static/pack.css` with your id; change the display name and `install.bin` path in `cartridge.json`. Set `source.release_repo` to your Forgejo account and repository, for example `yourname/cartridge-garden`, and keep `source.ref` as `main`. Change the package name in `Cargo.toml` to exactly match the repository name, `cartridge-<id>`, then regenerate and commit `Cargo.lock`. Keep `build.rs` and the source SHA in health. The example stylesheet is not declared in the manifest and has no visual effect until you declare it as described in the xenia-kit guide.
+3. Open https://ci.home.arpa, sign in with Forgejo and activate the repository. In Forgejo Settings → Applications create a token with repository write permission for Releases. Add it as the one Woodpecker repository secret `FORGEJO_TOKEN`, never to your repository or chat. The local runner executes the commands of repositories you activate as its own user without container isolation, so activate only code you trust. Push your requested changes to `main` and wait for a successful Woodpecker run.
+4. Once the HomeServer supports this flow, use Coronatio admin's Xenia admit with the Release's stamped `cartridge.json` and `ref: main`. Admit once; later requested pushes produce Releases for the next update. Woodpecker on a sold HomeServer and admitting a branch ref are coming in stages B and D respectively; until both are available this flow cannot complete.
+
+Read the HomeServer documentation page [Your own tab](https://github.com/homeserversltd/documentation/blob/main/docs/services/your-own-tab.md) for the full pipeline and admission steps. For an assistant: show the person the Woodpecker run and the tab; push to `main` only when the person asked for that change.
