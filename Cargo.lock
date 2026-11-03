@@ -1493,7 +1493,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 [[package]]
 name = "xenia-kit"
 version = "0.2.0"
-source = "git+https://github.com/homeserversltd/xenia-kit?rev=3294ebd9ddf7122c6d813faa1639074b2533f4d5#3294ebd9ddf7122c6d813faa1639074b2533f4d5"
+source = "git+https://github.com/homeserversltd/xenia-kit?rev=42d34f903e0dd53d09c81a2ed2f5e082b36b69cd#42d34f903e0dd53d09c81a2ed2f5e082b36b69cd"
 dependencies = [
  "async-stream",
  "axum",
