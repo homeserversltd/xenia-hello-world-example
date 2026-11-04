@@ -83,3 +83,215 @@ steps:
         request('PATCH', release_url, encoded({'draft': False}), 'application/json')
         print('Release ready:', sha)
         PY
+
+  - name: github-latest
+    image: python:3.12-bookworm
+    when:
+      - repo: HOMESERVERSLTD/cartridge-test
+    environment:
+      FORGEJO_TOKEN:
+        from_secret: FORGEJO_TOKEN
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - |
+        set -eu
+        python3 - <<'PY'
+        import hashlib
+        import json
+        import os
+        import re
+        import subprocess
+        import time
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        sha = os.environ['CI_COMMIT_SHA']
+        forge_token = os.environ['FORGEJO_TOKEN']
+        github_token = os.environ['GITHUB_TOKEN']
+        if not re.fullmatch('[0-9a-f]{40}', sha) or not forge_token or not github_token:
+            raise SystemExit('Missing token or invalid source SHA')
+        forge = 'https://git.home.arpa/api/v1/repos/HOMESERVERSLTD/cartridge-test'
+        github = 'https://api.github.com/repos/homeserversltd/xenia-hello-world-example'
+        uploads = 'https://uploads.github.com/repos/homeserversltd/xenia-hello-world-example'
+        names = ('cartridge-test-x86_64', 'cartridge-test-x86_64.sha256',
+                 'cartridge.json', 'release.flag')
+
+        class SafeRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                old = urllib.parse.urlsplit(req.full_url)
+                target = urllib.parse.urlsplit(urllib.parse.urljoin(req.full_url, newurl))
+                allowed = {'git.home.arpa', 'github.com', 'release-assets.githubusercontent.com',
+                           'objects.githubusercontent.com'}
+                if (target.scheme != 'https' or target.hostname not in allowed or
+                        target.username or target.password or target.port not in (None, 443)):
+                    raise RuntimeError('Unexpected asset redirect')
+                headers = {k: v for k, v in req.headers.items()
+                           if k.lower() not in ('cookie', 'proxy-authorization') and
+                           (k.lower() != 'authorization' or old.netloc == target.netloc)}
+                return urllib.request.Request(target.geturl(), headers=headers, method='GET')
+
+        opener = urllib.request.build_opener(SafeRedirect())
+        def call(method, url, token, payload=None, binary=False, missing=False):
+            target = urllib.parse.urlsplit(url)
+            allowed = ({'git.home.arpa'} if token is forge_token else
+                       {'api.github.com', 'uploads.github.com', 'github.com'})
+            if (target.scheme != 'https' or target.hostname not in allowed or
+                    target.username or target.password or target.port not in (None, 443)):
+                raise RuntimeError('Unexpected request host')
+            headers = {'User-Agent': 'cartridge-test-release',
+                       'Accept': 'application/octet-stream' if binary else 'application/json',
+                       'Authorization': ('token ' if target.hostname == 'git.home.arpa' else 'Bearer ') + token}
+            data = payload
+            if isinstance(payload, dict):
+                data = json.dumps(payload).encode()
+                headers['Content-Type'] = 'application/json'
+            elif payload is not None:
+                headers['Content-Type'] = 'application/octet-stream'
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            try:
+                with opener.open(req, timeout=90) as response:
+                    raw = response.read()
+            except urllib.error.HTTPError as exc:
+                if missing and exc.code == 404:
+                    return None
+                raise RuntimeError('Release request failed: HTTP ' + str(exc.code)) from None
+            return raw if binary else (json.loads(raw) if raw else None)
+
+        def main_sha():
+            ref = call('GET', forge + '/git/refs/heads/main', forge_token)
+            if isinstance(ref, list):
+                ref = next(item for item in ref if item.get('ref') == 'refs/heads/main')
+            return ref['object']['sha']
+
+        def github_ref():
+            ref = call('GET', github + '/git/ref/tags/latest', github_token, missing=True)
+            return None if ref is None else ref['object']['sha']
+
+        def source_release():
+            return call('GET', forge + '/releases/tags/sha-' + sha, forge_token, missing=True)
+
+        def github_assets(release_id):
+            result = []
+            for page in range(1, 101):
+                batch = call('GET', github + '/releases/' + str(release_id) +
+                             '/assets?per_page=100&page=' + str(page), github_token)
+                result.extend(batch)
+                if len(batch) < 100:
+                    return result
+            raise RuntimeError('Too many release assets')
+
+        def publish():
+            if main_sha() != sha:
+                print('Skipped: superseded build')
+                return
+            release = source_release()
+            if release is None:
+                print('Skipped: source release missing')
+                return
+            if release.get('draft') or release.get('tag_name') != 'sha-' + sha:
+                raise RuntimeError('Source release is not published for this SHA')
+            source = call('GET', forge + '/releases/' + str(release['id']) + '/assets', forge_token)
+            assets = {item['name']: item for item in source}
+            if len(source) != len(names) or set(assets) != set(names):
+                raise RuntimeError('Source release asset set differs')
+            data = {name: call('GET', assets[name]['browser_download_url'], forge_token, binary=True)
+                    for name in names}
+            digest = hashlib.sha256(data[names[0]]).hexdigest()
+            if data[names[1]] != (digest + '  ' + names[0] + '\n').encode():
+                raise RuntimeError('Source binary digest differs')
+            flag = json.loads(data['release.flag'])
+            if flag.get('source_sha') != sha or flag.get('sha256') != digest:
+                raise RuntimeError('Source release flag differs')
+            if main_sha() != sha:
+                print('Skipped: superseded build')
+                return
+            if call('GET', forge + '/releases/tags/latest', forge_token, missing=True) is not None:
+                raise RuntimeError('Source latest must be a tag, not a release')
+            latest = call('GET', forge + '/git/refs/tags/latest', forge_token, missing=True)
+            if isinstance(latest, list):
+                latest = next(item for item in latest if item.get('ref') == 'refs/tags/latest')
+            old_tag = '' if latest is None else latest['object']['sha']
+            if main_sha() != sha:
+                print('Skipped: superseded build')
+                return
+            env = os.environ.copy()
+            env.pop('FORGEJO_TOKEN', None)
+            env.pop('GITHUB_TOKEN', None)
+            env.update({'GIT_CONFIG_COUNT': '1',
+                        'GIT_CONFIG_KEY_0': 'http.https://git.home.arpa/.extraheader',
+                        'GIT_CONFIG_VALUE_0': 'Authorization: token ' + forge_token,
+                        'GIT_TERMINAL_PROMPT': '0'})
+            result = subprocess.run(['git', 'push', '--force-with-lease=refs/tags/latest:' + old_tag,
+                                     '--no-follow-tags',
+                                     'https://git.home.arpa/HOMESERVERSLTD/cartridge-test.git',
+                                     sha + ':refs/tags/latest'], env=env, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+            if result.returncode:
+                raise RuntimeError('Source latest tag push failed')
+            deadline = time.monotonic() + 180
+            while github_ref() != sha:
+                if main_sha() != sha:
+                    print('Skipped: superseded build')
+                    return
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Latest tag was not mirrored within 180 seconds')
+                try:
+                    call('POST', forge + '/push_mirrors-sync', forge_token, payload={})
+                except RuntimeError:
+                    pass
+                time.sleep(3)
+            if main_sha() != sha:
+                print('Skipped: superseded build')
+                return
+            current = call('GET', github + '/releases/tags/latest', github_token, missing=True)
+            if current is not None:
+                old_assets = github_assets(current['id'])
+                if (current.get('target_commitish') == sha and not current.get('draft') and
+                        not current.get('prerelease') and
+                        {asset['name'] for asset in old_assets} == set(names) and
+                        len(old_assets) == len(names) and
+                        all(call('GET', asset['browser_download_url'], github_token, binary=True) ==
+                            data[asset['name']] for asset in old_assets)):
+                    if main_sha() != sha or github_ref() != sha:
+                        raise RuntimeError('Source moved during release comparison')
+                    print('Release already current:', sha)
+                    return
+                for asset in old_assets:
+                    if main_sha() != sha or github_ref() != sha:
+                        raise RuntimeError('Source moved during asset removal')
+                    call('DELETE', github + '/releases/assets/' + str(asset['id']), github_token)
+            if main_sha() != sha or github_ref() != sha:
+                raise RuntimeError('Source moved during release update')
+            body = {'name': 'cartridge-test latest', 'target_commitish': sha,
+                    'draft': False, 'prerelease': False, 'make_latest': 'true'}
+            if current is None:
+                body['tag_name'] = 'latest'
+                current = call('POST', github + '/releases', github_token, payload=body)
+            else:
+                current = call('PATCH', github + '/releases/' + str(current['id']),
+                               github_token, payload=body)
+            for name in names:
+                if main_sha() != sha or github_ref() != sha:
+                    raise RuntimeError('Source moved during asset upload')
+                url = uploads + '/releases/' + str(current['id']) + '/assets?' + urllib.parse.urlencode({'name': name})
+                call('POST', url, github_token, payload=data[name])
+            verified = call('GET', github + '/releases/tags/latest', github_token)
+            actual = github_assets(verified['id'])
+            if (verified.get('target_commitish') != sha or len(actual) != len(names) or
+                    {asset['name'] for asset in actual} != set(names) or
+                    any(call('GET', asset['browser_download_url'], github_token, binary=True) !=
+                        data[asset['name']] for asset in actual)):
+                raise RuntimeError('Published release readback differs')
+            if main_sha() != sha or github_ref() != sha:
+                raise RuntimeError('Source moved during release publication')
+            print('GitHub Release ready:', sha)
+
+        try:
+            publish()
+        except RuntimeError as exc:
+            raise SystemExit('GitHub release failed: ' + str(exc)) from None
+        except Exception as exc:
+            raise SystemExit('GitHub release failed: ' + type(exc).__name__) from None
+        PY
