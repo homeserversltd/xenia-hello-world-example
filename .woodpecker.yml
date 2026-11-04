@@ -70,6 +70,19 @@ steps:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             with urllib.request.build_opener(SameForge()).open(req, timeout=180) as response:
                 return json.loads(response.read())
+        try:
+            existing = request('GET', api + '/tags/' + urllib.parse.quote('sha-' + sha, safe=''), None, 'application/json')
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+            existing = None
+        expected = {binary_name, binary_name + '.sha256', 'cartridge.json', 'release.flag'}
+        if existing is not None:
+            if (existing.get('draft') or existing.get('target_commitish') != sha or
+                    {item.get('name') for item in existing.get('assets', [])} != expected):
+                raise SystemExit('A Release for this commit exists but is incomplete; inspect it in Forgejo')
+            print('Release already published:', sha)
+            raise SystemExit(0)
         release = request('POST', api, encoded({'tag_name': 'sha-' + sha, 'name': repo + ' ' + sha[:8],
                           'target_commitish': sha, 'draft': True, 'prerelease': False}),
                           'application/json')
