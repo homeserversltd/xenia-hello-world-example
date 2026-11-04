@@ -70,7 +70,7 @@ steps:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             with urllib.request.build_opener(SameForge()).open(req, timeout=180) as response:
                 return json.loads(response.read())
-        release = request('POST', api, encoded({'tag_name': sha, 'name': repo + ' ' + sha[:8],
+        release = request('POST', api, encoded({'tag_name': 'sha-' + sha, 'name': repo + ' ' + sha[:8],
                           'target_commitish': sha, 'draft': True, 'prerelease': False}),
                           'application/json')
         assets = {binary_name: binary,
