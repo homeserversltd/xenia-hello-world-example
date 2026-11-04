@@ -1,18 +1,18 @@
 {
   "schema": "appliance.xenia.v1",
-  "id": "hello-world",
-  "display": "Hello World",
-  "version": "0.1.0",
+  "id": "test",
+  "display": "Test",
+  "version": "0.2.0",
   "kind": "cartridge-process",
   "client_class": "fragment",
   "source": {
-    "release_repo": "<your-account>/cartridge-hello-world",
+    "release_repo": "<your-account>/cartridge-test",
     "ref": "main"
   },
   "transport": {
     "declared": null
   },
-  "proxy_route": "/api/tabs/hello-world",
+  "proxy_route": "/api/tabs/test",
   "fragment_path": "/fragment",
   "health": {
     "route": "/health",
@@ -27,7 +27,7 @@
   "requires_kit": null,
   "content_inventory_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "install": {
-    "bin": "/var/lib/xenia/hello-world/cartridge-hello-world",
+    "bin": "/var/lib/xenia/test/cartridge-test",
     "unit": null,
     "static_dir": null,
     "owner": "xenia"

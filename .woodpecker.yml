@@ -4,7 +4,7 @@ when:
 
 steps:
   - name: build-and-release
-    image: bash
+    image: python:3.12-bookworm
     environment:
       FORGEJO_TOKEN:
         from_secret: FORGEJO_TOKEN
