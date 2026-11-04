@@ -4,7 +4,7 @@ when:
 
 steps:
   - name: build-and-release
-    image: python:3.12-bookworm
+    image: python:3.13-bookworm
     environment:
       FORGEJO_TOKEN:
         from_secret: FORGEJO_TOKEN
@@ -85,7 +85,7 @@ steps:
         PY
 
   - name: github-latest
-    image: python:3.12-bookworm
+    image: python:3.13-bookworm
     when:
       - repo: HOMESERVERSLTD/cartridge-test
     environment:
