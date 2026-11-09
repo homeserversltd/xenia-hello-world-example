@@ -1,6 +1,6 @@
 [package]
 name = "cartridge-test"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -11,4 +11,4 @@ axum = "0.8"
 maud = "0.27"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-xenia-kit = { git = "https://github.com/homeserversltd/xenia-kit", rev = "969ed4b75296719c2a9ce494197e91d938a1fa4c" }
+xenia-kit = { git = "https://github.com/homeserversltd/xenia-kit", rev = "e9f84d5dadb82cbe6a56f1b448e493cad7781186" }
