@@ -99,7 +99,7 @@ steps:
         print('Release ready:', sha)
         PY
 
-  - name: admit-tab
+  - name: ready-to-add
     image: python:3.13-bookworm
     commands:
       - |
@@ -115,42 +115,25 @@ steps:
 
         manifest = json.loads(pathlib.Path('.release/cartridge.json').read_text())
         door = os.environ.get('XENIA_DOOR', 'http://127.0.0.1:3014').rstrip('/')
-        root = door + '/api/v1/xenia/'
-
-        def call(path, payload=None):
-            data = None if payload is None else json.dumps(payload).encode()
-            request = urllib.request.Request(root + path, data=data,
-                headers={'Content-Type': 'application/json'} if data else {})
-            try:
-                with urllib.request.urlopen(request, timeout=5) as response:
-                    result = json.load(response)
-            except urllib.error.HTTPError as error:
-                result = json.load(error)
-                if result.get('verdict') != 'refused':
-                    raise
-            if result.get('verdict') == 'refused':
-                raise SystemExit(f"{path} refused: {result.get('check')} {result.get('field')} {result.get('message')}")
-            return result
-
+        url = door + '/api/v1/xenia/status/' + urllib.parse.quote(manifest['id'], safe='')
         try:
-            status = call('status/' + urllib.parse.quote(manifest['id'], safe=''))
+            with urllib.request.urlopen(url, timeout=5) as response:
+                status = json.load(response)
+        except urllib.error.HTTPError as error:
+            status = json.load(error)
         except (urllib.error.URLError, TimeoutError) as error:
             reason = error.reason if isinstance(error, urllib.error.URLError) else error
             if isinstance(reason, (TimeoutError, socket.timeout)) or getattr(reason, 'errno', None) == errno.ECONNREFUSED:
-                print('No HomeServer door here; skipping admit')
+                print('No HomeServer door here; nothing to add')
                 raise SystemExit(0)
             raise
         if 'entry' in status:
-            print('Tab already admitted')
+            print('Tab already added; the next update installs this Release')
             raise SystemExit(0)
         if status.get('runtime', {}).get('state') != 'entry-absent':
             raise SystemExit('Status did not identify an absent tab')
-        row = {'displayName': manifest['display'], 'adminOnly': True, 'order': 100,
-               'visibility': {'tab': True, 'elements': {}}, 'data': {}}
-        payload = {'manifest': manifest, 'tabs': row}
-        call('validate', payload)
-        call('admit', payload)
-        print('Tab admitted:', manifest['id'])
+        repo = os.environ.get('CI_REPO') or manifest['source']['release_repo']
+        print(f'Your tab is ready to add. On your HomeServer press +, choose Make one, and add {repo}.')
         PY
 
   - name: github-latest
