@@ -2,7 +2,7 @@
   "schema": "appliance.xenia.v1",
   "id": "test",
   "display": "Test",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "kind": "cartridge-process",
   "client_class": "fragment",
   "source": {
